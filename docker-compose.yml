@@ -1,0 +1,22 @@
+# Deploy:  docker compose up -d --build
+#
+# Serves the app over HTTP on the host port below. Point your reverse proxy at
+# http://<server-ip>:<HOST_PORT> and let it handle the domain + HTTPS cert.
+services:
+  modular-riffs:
+    build: .
+    image: modular-riffs
+    container_name: modular-riffs
+    restart: unless-stopped
+    ports:
+      - "${HOST_PORT:-7000}:7000"
+
+    # --- Alternative: if Nginx Proxy Manager runs in Docker, put this container
+    # on NPM's network instead of publishing a port, then forward NPM to
+    # http://modular-riffs:7000 . Uncomment below and remove the `ports:` block.
+    # networks:
+    #   - npm
+# networks:
+#   npm:
+#     external: true
+#     name: <your-npm-network-name>

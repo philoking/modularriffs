@@ -1,0 +1,13 @@
+# Plain HTTP static file server. TLS is handled by your reverse proxy upstream.
+#
+# The browser still loads the app over https:// (a secure context, so Web MIDI
+# works) — the reverse proxy terminates HTTPS and forwards to this container over
+# HTTP, which the browser never sees.
+:7000 {
+	root * /srv
+	file_server
+	encode gzip
+	# Revalidate on every load (cheap 304s via ETag) so a deploy shows up on a
+	# normal refresh instead of serving a stale cached CSS/JS.
+	header Cache-Control "no-cache"
+}

@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Modular Riffs</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,400..800&family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <h1>Modular&nbsp;Riffs</h1>
+      <span class="tagline">generative MIDI backing for your modular synth</span>
+    </div>
+
+    <div class="transport">
+      <button id="btnEnableMidi" class="btn">Enable MIDI</button>
+      <select id="midiOut" class="sel" title="MIDI output" disabled></select>
+      <button id="btnStart" class="btn btn-go" disabled>▶ Start</button>
+      <button id="btnPause" class="btn" disabled>⏸ Pause</button>
+      <button id="btnStop" class="btn" disabled>■ Stop</button>
+      <button id="btnPanic" class="btn btn-warn" title="All notes off">Panic</button>
+    </div>
+
+    <label class="tempo-top" title="Tempo">Tempo <span id="bpmVal" class="val"></span>
+      <input id="bpm" type="range" min="40" max="200" step="1" />
+    </label>
+    <div class="barcount" title="current bar / total bars composed so far">
+      <span class="bc-k">Bar</span>
+      <span id="barNow" class="bc-v">—</span><span class="bc-sep">/</span><span id="barTotal" class="bc-v bc-total">—</span>
+    </div>
+    <div class="beats" title="beat"><i></i><i></i><i></i><i></i></div>
+  </header>
+
+  <main>
+    <!-- Arrangement — the instrument -->
+    <section class="panel arr">
+      <div class="arr-bar">
+        <h2>Arrangement <span class="hint">drag intensity · click a part to mute (⇧ = section) · click a section to edit</span></h2>
+        <div class="arr-actions">
+          <button id="btnNew" class="btn btn-go" title="Start a new song — key, scale, style, blueprint">✦ New song…</button>
+          <button id="btnGenerate" class="btn" title="Regenerate the whole song (locked sections survive)">⟳ Regenerate</button>
+          <button id="btnDice" class="btn" title="Regenerate with a new random seed">🎲</button>
+          <button id="btnRerollMelody" class="btn" title="New melodies over the same chords &amp; structure">🎵 Melodies</button>
+        </div>
+      </div>
+      <div id="timeline"></div>
+      <div class="block-bar">
+        <div class="block-nav">
+          <button id="blkPrev" class="btn" type="button" title="previous section">◀</button>
+          <span id="blkLabel" class="block-label">—</span>
+          <button id="blkNext" class="btn" type="button" title="next section">▶</button>
+        </div>
+        <label class="inline-field type">Type
+          <select id="blkType" class="sel"><option value="A">A · verse</option><option value="B">B · chorus</option><option value="C">C · bridge</option></select>
+        </label>
+        <label class="inline-field prog">Chord progression
+          <select id="blkProg" class="sel"></select>
+        </label>
+        <label class="inline-field bars">Bars
+          <input id="blkBars" type="number" min="1" max="32" step="1" class="txt" />
+        </label>
+        <div class="block-verbs">
+          <button id="btnLock" class="btn vb" type="button" title="Lock this section so Regenerate leaves it untouched">🔓</button>
+          <button id="btnReroll" class="btn vb" type="button" title="Reroll this section's chords (a new variation)">⟳ Reroll</button>
+          <button id="btnHalve" class="btn vb" type="button" title="Halve this section's length">÷2</button>
+          <button id="btnExtend" class="btn vb" type="button" title="Double this section's length">×2</button>
+          <button id="btnRepeat" class="btn vb" type="button" title="Duplicate this section right after it">⧉ Repeat</button>
+          <button id="btnJump" class="btn vb" type="button" title="Jump playback to this section at the next bar (while playing)">⇥ Jump</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Parts — compact live mixer -->
+    <section class="panel">
+      <h2>Parts <span class="hint">mute &amp; ride Activity live · ⚙ opens channel, octave &amp; fine controls</span></h2>
+      <div id="parts" class="parts-strip"></div>
+    </section>
+
+    <!-- Feel &amp; output -->
+    <section class="panel">
+      <h2>Feel &amp; output <span class="hint">fine-tune the groove, then route the sound</span></h2>
+      <div class="grid">
+        <label class="field">Evolve <span id="evolveVal" class="val"></span>
+          <input id="evolve" type="range" min="0" max="1" step="0.01" />
+          <span class="hint">low = faithful to the blueprint · high = more derivative</span>
+        </label>
+        <label class="field">Swing <span id="swingVal" class="val"></span>
+          <input id="swing" type="range" min="0" max="0.6" step="0.01" />
+        </label>
+        <label class="field">Seed
+          <div class="row">
+            <input id="seed" type="text" class="txt" spellcheck="false" />
+            <button id="btnSeed" class="btn" title="Random seed">⟳</button>
+          </div>
+        </label>
+      </div>
+
+      <div class="grid">
+        <label class="field">Output
+          <select id="outputMode" class="sel">
+            <option value="both">Internal synth + MIDI</option>
+            <option value="synth">Internal synth only</option>
+            <option value="midi">MIDI only</option>
+          </select>
+        </label>
+        <label class="field">Synth volume <span id="volVal" class="val"></span>
+          <input id="vol" type="range" min="0" max="1" step="0.01" value="0.8" />
+        </label>
+      </div>
+
+      <label class="check"><input id="sendClock" type="checkbox" checked /> Send MIDI clock + Start/Stop (sync your modular)</label>
+      <p class="hint energy-note">Energy lives on the Arrangement now — drag the Intensity lane's left edge up/down to lift or drop the whole song.</p>
+    </section>
+
+    <!-- Presets -->
+    <section class="panel">
+      <h2>Presets <span class="hint">save a jam to this browser, or export / import JSON to move it between machines</span></h2>
+      <div class="row preset-row">
+        <input id="presetName" type="text" class="txt" placeholder="name this jam" spellcheck="false" />
+        <button id="btnSave" class="btn">Save</button>
+        <select id="presetList" class="sel"></select>
+        <button id="btnLoad" class="btn">Load</button>
+        <button id="btnDelete" class="btn btn-warn" title="delete selected">🗑</button>
+        <button id="btnExport" class="btn">Export</button>
+        <button id="btnExportMidi" class="btn" title="Export the current timeline as a Standard MIDI File">Export MIDI</button>
+        <button id="btnImport" class="btn">Import</button>
+        <input id="importFile" type="file" accept=".json,application/json" hidden />
+      </div>
+      <p class="hint">Shortcuts: <b>Space</b> play/stop · <b>1–4</b> mute parts · <b>← →</b> section · <b>S</b> snapshot</p>
+    </section>
+  </main>
+
+  <!-- New-song modal -->
+  <div id="newModal" class="modal" hidden>
+    <div class="modal-backdrop" data-close></div>
+    <div class="modal-card">
+      <h2>New song <span class="hint">pick the key &amp; feel, then generate</span></h2>
+      <div class="grid">
+        <label class="field">Key
+          <select id="root" class="sel"></select>
+        </label>
+        <label class="field">Scale / Mode
+          <select id="scale" class="sel"></select>
+        </label>
+        <label class="field">Style
+          <select id="style" class="sel"></select>
+        </label>
+        <label class="field">Blueprint
+          <select id="blueprint" class="sel" title="The real song structure + progression to start from"></select>
+        </label>
+      </div>
+      <div class="modal-actions">
+        <button id="btnNewGenerate" class="btn btn-go">✦ Generate</button>
+        <button id="btnNewCancel" class="btn" data-close>Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <footer class="statusbar">
+    <div id="firstrun" class="firstrun" hidden>
+      <span class="fr-title">Get started</span>
+      <span class="fr-item" data-step="midi">Enable MIDI</span>
+      <span class="fr-item" data-step="port">Pick your interface</span>
+      <span class="fr-item" data-step="out">Set output</span>
+      <button id="frDismiss" class="tl-clear" type="button">dismiss</button>
+    </div>
+    <span id="status">Press ▶ Start to hear the internal synth. For your modular: “Enable MIDI”, pick your USB interface, set Output to include MIDI, then ▶ Start.</span>
+  </footer>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>

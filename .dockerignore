@@ -1,0 +1,14 @@
+.git
+.gitignore
+.env
+.env.example
+node_modules
+*.log
+.DS_Store
+README.md
+serve.sh
+serve.cmd
+deploy.sh
+Dockerfile
+docker-compose.yml
+.dockerignore
