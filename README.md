@@ -8,6 +8,8 @@ channels 1–4. It also acts as the master **MIDI clock** so your modular's
 sequencers and LFOs lock to the tempo, and a built-in synth lets you hear it all
 without patching.
 
+<img width="1506" height="1631" alt="Modular Riffs" src="https://github.com/user-attachments/assets/660ff158-8f05-4377-b9dc-e412088af08a" />
+
 Crucially, it doesn't generate at random: every song is **derived from a real
 chord-progression + structure blueprint and a library of known-good melodic
 shapes, then mutated** — so the output sounds like a genre rather than a random
