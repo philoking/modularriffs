@@ -26,8 +26,8 @@ const state = {
   sendClock: true,
   bassStyle: 'roots',
   arpDir: 'up',
+  padMode: 'note',      // 'note' = mono drone | 'chord' = full chord stacked on the pad channel
   style: 'cinematic',
-  outputMode: 'synth',  // 'both' | 'synth' | 'midi' — internal until MIDI enabled
   vol: 0.8,
   rev: 0,               // bumped on song/intensity/mute changes (timeline change-detection)
   family: { A: 'i VI III VII', B: 'VI VII i i', C: 'iv VII III VI' }, // default chords per type (new blocks)
@@ -36,11 +36,14 @@ const state = {
   pendingEdits: [],                                            // armed structural edits, applied at the next bar (not serialised)
   song: [],                                                    // materialised per-bar timeline (derived from blocks)
   intensity: [],                                               // per-bar base intensity (0..1)
+  // Each track routes independently: output 'synth' = internal synth, otherwise a
+  // MIDI port id. channel (0-15) applies when routed to a port. Default to the
+  // synth on distinct channels so a DAWless rig can spread tracks across gear.
   parts: {
-    pad:    { enabled: true, channel: 0, octave: 0, density: 0.30, velocity: 0.5, gate: 0.92 }, // mono pad
-    bass:   { enabled: true, channel: 1, octave: 0, density: 0.55, velocity: 0.7, gate: 0.7 },  // bassline
-    melody: { enabled: true, channel: 2, octave: 0, density: 0.60, velocity: 0.7, gate: 0.55 }, // arpeggiator
-    alt:    { enabled: true, channel: 3, octave: 0, density: 0.50, velocity: 0.7, gate: 0.7 },  // lead melody
+    pad:    { enabled: true, output: 'synth', channel: 0, octave: 0, density: 0.30, velocity: 0.5, gate: 0.92 }, // mono pad
+    bass:   { enabled: true, output: 'synth', channel: 1, octave: 0, density: 0.55, velocity: 0.7, gate: 0.7 },  // bassline
+    melody: { enabled: true, output: 'synth', channel: 2, octave: 0, density: 0.60, velocity: 0.7, gate: 0.55 }, // arpeggiator
+    alt:    { enabled: true, output: 'synth', channel: 3, octave: 0, density: 0.50, velocity: 0.7, gate: 0.7 },  // lead melody
   },
   // Per-bar mutes set from the timeline: each Set holds loop-bar indices where
   // that part is silenced (the generator skips it for those bars).
@@ -56,6 +59,7 @@ let transport = null;
 let running = false;
 let paused = false;     // halted but holding position (resume vs start-over)
 let midiEnabled = false;
+const FR_KEY = 'modularriffs:onboarded'; // first-run checklist dismissal flag (declared up here so refreshFirstRun, called during the parts render, isn't in its TDZ)
 // Live playback position shared with the Arrangement timeline (playhead).
 const pos = { bar: 0, step: 0, atPerf: 0, stepMs: 60000 / state.bpm / 4, running: false };
 
@@ -70,12 +74,12 @@ const setStatus = (msg, isErr = false) => {
   el.parentElement.classList.toggle('err', isErr);
 };
 
-// Transport button states. Start is blocked only if MIDI-only with no port; while
-// paused it reads "Resume". Stop is available to halt or to reset the cue to the top.
+// Transport button states. The internal synth is always available, so Start is
+// only blocked while already running; paused it reads "Resume". Stop halts or
+// resets the cue to the top.
 function updateStartEnabled() {
-  const midiBlocked = state.outputMode === 'midi' && !midi.output;
   const startBtn = $('btnStart');
-  startBtn.disabled = running || midiBlocked;
+  startBtn.disabled = running;
   startBtn.textContent = paused ? '▶ Resume'
     : (!running && (state.selectedBlock || 0) > 0 ? '▶ Play here' : '▶ Start');
   const pauseBtn = $('btnPause'); if (pauseBtn) pauseBtn.disabled = !running;
@@ -166,6 +170,48 @@ function fillSelect(el, entries, selected) {
     if (String(value) === String(selected)) o.selected = true;
     el.appendChild(o);
   }
+}
+
+// The MIDI channel only applies when a track is routed to an interface.
+function setChannelEnabled(el, p) {
+  const field = el.querySelector('[data-chan-field]');
+  const sel = el.querySelector('[data-ctl="channel"]');
+  const midiRouted = !!p.output && p.output !== 'synth';
+  if (sel) sel.disabled = !midiRouted;
+  if (field) field.classList.toggle('disabled', !midiRouted);
+}
+
+// (Re)populate one track's Output select: internal synth + every available port.
+// A saved-but-offline port is kept as an option so a USB device reconnecting
+// doesn't silently drop the routing.
+function fillPartOutputs(el, p, outs) {
+  const sel = el.querySelector('[data-ctl="output"]');
+  if (!sel) return;
+  const entries = [['synth', 'Internal synth']];
+  for (const o of outs) entries.push([o.id, o.name]);
+  if (p.output && p.output !== 'synth' && !outs.some((o) => o.id === p.output)) {
+    entries.push([p.output, '⚠ saved port (offline)']);
+  }
+  fillSelect(sel, entries, p.output);
+  setChannelEnabled(el, p);
+}
+
+// Refresh all four tracks' Output menus (after Enable MIDI or a hot-plug).
+function refreshPartOutputs(outs) {
+  for (const key of PARTS) {
+    const el = document.querySelector(`.part[data-part="${key}"]`);
+    if (el) fillPartOutputs(el, state.parts[key], outs);
+  }
+  updateStartEnabled();
+}
+
+// { out, channel } routes for every MIDI-routed track — for the Panic button.
+function midiRoutes() {
+  const routes = [];
+  for (const p of Object.values(state.parts)) {
+    if (p.output && p.output !== 'synth') { const o = midi.get(p.output); if (o) routes.push({ out: o, channel: p.channel }); }
+  }
+  return routes;
 }
 
 fillSelect($('root'), NOTE_NAMES.map((n, i) => [i, n]), state.rootPc);
@@ -324,12 +370,17 @@ for (const key of ['pad', 'bass', 'melody', 'alt']) {
         <span class="act-lbl">Activity <span class="val" data-val="density"></span></span>
         <input type="range" data-ctl="density" min="0" max="1" step="0.01" value="${p.density}">
       </label>
-      <button type="button" class="settings-btn" data-settings title="Channel, octave &amp; fine controls">⚙</button>
+      <button type="button" class="settings-btn" data-settings title="Output, channel, octave &amp; fine controls">⚙</button>
     </div>
     <div class="part-settings" hidden>
-      <label class="field">MIDI channel
+      <label class="field">Output
+        <select class="sel" data-ctl="output" title="Internal synth, or a MIDI interface"></select>
+      </label>
+      <label class="field" data-chan-field>MIDI channel
         <select class="sel" data-ctl="channel"></select>
       </label>
+      ${key === 'pad' ? `<label class="field">Pad voicing
+        <select class="sel" data-ctl="padMode">${[['note', 'Single note'], ['chord', 'Chord']].map(([v, l]) => `<option value="${v}">${l}</option>`).join('')}</select></label>` : ''}
       ${key === 'bass' ? `<label class="field">Bass style
         <select class="sel" data-ctl="bassStyle">${['roots', 'roots8', 'offbeat', 'walking', 'syncopated'].map((s) => `<option value="${s}">${s}</option>`).join('')}</select></label>` : ''}
       ${key === 'melody' ? `<label class="field">Arp pattern
@@ -348,6 +399,7 @@ for (const key of ['pad', 'bass', 'melody', 'alt']) {
 
   fillSelect(el.querySelector('[data-ctl="channel"]'),
     Array.from({ length: 16 }, (_, i) => [i, `Ch ${i + 1}`]), p.channel);
+  fillPartOutputs(el, p, midi.listOutputs()); // synth-only until MIDI is enabled
 
   el.querySelectorAll('[data-ctl]').forEach((ctl) => {
     const name = ctl.dataset.ctl;
@@ -356,10 +408,16 @@ for (const key of ['pad', 'bass', 'melody', 'alt']) {
         p.enabled = ctl.checked;
         el.classList.toggle('off', !ctl.checked);
         el.querySelector('[data-dot]').classList.toggle('fire', ctl.checked);
+      } else if (name === 'padMode') {
+        state.padMode = ctl.value;
       } else if (name === 'bassStyle') {
         state.bassStyle = ctl.value;
       } else if (name === 'arpDir') {
         state.arpDir = ctl.value;
+      } else if (name === 'output') {
+        p.output = ctl.value;
+        setChannelEnabled(el, p);     // channel only matters when routed to MIDI
+        refreshFirstRun();
       } else if (name === 'channel') {
         p.channel = parseInt(ctl.value, 10);
       } else {
@@ -408,8 +466,6 @@ $('btnSeed').addEventListener('click', () => {
 });
 
 $('sendClock').addEventListener('change', (e) => { state.sendClock = e.target.checked; });
-$('outputMode').addEventListener('change', (e) => { state.outputMode = e.target.value; updateStartEnabled(); refreshFirstRun(); });
-$('outputMode').value = state.outputMode; // default: internal synth until MIDI is enabled
 
 // Applying a style preset: tempo/feel + a freshly generated song in that style.
 $('style').addEventListener('change', (e) => applyStyle(e.target.value));
@@ -465,44 +521,28 @@ function setPart(part, name, value) {
   if (ctl) { ctl.value = value; ctl.dispatchEvent(new Event('input')); }
 }
 
-// ---- MIDI enable + output selection ----
+// ---- MIDI enable ----
+// Grants Web MIDI access, then lets each track's Output menu list the interfaces.
+// Routing itself is per-track (in each ⚙ panel), so there's no global port pick.
 $('btnEnableMidi').addEventListener('click', async () => {
   try {
     const outs = await midi.init();
-    refreshOutputs(outs);
-    $('midiOut').disabled = false;
-    midi.onStateChange = refreshOutputs;
+    midi.onStateChange = refreshPartOutputs;   // repopulate every track on hot-plug
     midiEnabled = true;
-    if (outs.length) {
-      // Enabling MIDI switches output to MIDI-only (internal synth off).
-      state.outputMode = 'midi';
-      $('outputMode').value = 'midi';
-      updateStartEnabled();
-    }
+    refreshPartOutputs(outs);
     refreshFirstRun();
-    setStatus(outs.length ? 'MIDI ready — output set to your interface (internal synth off). Press Start.' : 'No MIDI outputs found. Plug in your USB MIDI interface, then re-click Enable MIDI. (Internal synth still works.)');
+    setStatus(outs.length
+      ? `MIDI ready — ${outs.length} interface${outs.length > 1 ? 's' : ''} found. Open a track's ⚙ and pick its Output + channel.`
+      : 'No MIDI outputs found. Plug in your interface, then re-click Enable MIDI. (Internal synth still works.)');
   } catch (err) {
     setStatus(err.message, true);
   }
 });
 
-function refreshOutputs(outs) {
-  const sel = $('midiOut');
-  const prev = sel.value;
-  fillSelect(sel, outs.map((o) => [o.id, o.name]), prev);
-  if (outs.length) {
-    const chosen = midi.selectOutput(sel.value || outs[0].id) || midi.selectOutput(outs[0].id);
-    sel.value = chosen ? chosen.id : '';
-  }
-  updateStartEnabled();
-}
-$('midiOut').addEventListener('change', (e) => { midi.selectOutput(e.target.value); refreshFirstRun(); });
-
 // ---- transport ----
 const beatEls = document.querySelectorAll('.beats i');
 
 $('btnStart').addEventListener('click', () => {
-  if (state.outputMode === 'midi' && !midi.output) { setStatus('MIDI-only output, but no MIDI port selected. Pick one, or switch Output to include the internal synth.', true); return; }
   buildSong();
   if (!transport) {
     transport = new Transport(midi, synth, generator, state, {
@@ -559,7 +599,7 @@ $('btnStop').addEventListener('click', () => {
 
 $('btnPanic').addEventListener('click', () => {
   if (transport) { transport.stop(); transport.pendingJump = null; }
-  midi.panic(Object.values(state.parts).map((p) => p.channel));
+  midi.panic(midiRoutes());
   synth.panic();
   running = false; pos.running = false; paused = false;
   state.pendingEdits = [];
@@ -571,14 +611,15 @@ $('btnPanic').addEventListener('click', () => {
 // ---- save / recall ----
 const PART_LIST = ['pad', 'bass', 'melody', 'alt'];
 
-// A jam snapshot: all musical/arrangement state (not output prefs like the MIDI
-// port or synth volume). Sets become arrays for JSON.
+// A jam snapshot: all musical/arrangement state plus per-track routing (output +
+// channel, carried inside parts — offline ports fall back gracefully on recall).
+// Synth volume stays a machine-local pref. Sets become arrays for JSON.
 function serialize() {
   return {
     v: 1,
     rootPc: state.rootPc, scaleKey: state.scaleKey, style: state.style,
     bpm: state.bpm, swing: state.swing, energy: state.energy, evolve: state.evolve,
-    seed: state.seed, sendClock: state.sendClock, bassStyle: state.bassStyle, arpDir: state.arpDir,
+    seed: state.seed, sendClock: state.sendClock, bassStyle: state.bassStyle, arpDir: state.arpDir, padMode: state.padMode,
     blueprint: state.blueprint, melodySalt: state.melodySalt,
     family: state.family, blocks: state.blocks, selectedBlock: state.selectedBlock,
     song: state.song, intensity: state.intensity, formState: state.formState,
@@ -589,7 +630,8 @@ function serialize() {
 
 function deserialize(d) {
   if (!d || typeof d !== 'object') throw new Error('not a Modular Riffs jam');
-  const scalars = ['rootPc', 'scaleKey', 'style', 'bpm', 'swing', 'energy', 'evolve', 'seed', 'sendClock', 'bassStyle', 'arpDir', 'selectedBlock', 'blueprint', 'melodySalt'];
+  const scalars = ['rootPc', 'scaleKey', 'style', 'bpm', 'swing', 'energy', 'evolve', 'seed', 'sendClock', 'bassStyle', 'arpDir', 'padMode', 'selectedBlock', 'blueprint', 'melodySalt'];
+  if (d.padMode === undefined) state.padMode = 'note'; // backward-compat for older presets
   if (d.blueprint === undefined) state.blueprint = 'auto'; // backward-compat for older presets
   if (d.melodySalt === undefined) state.melodySalt = 0;
   state.pendingEdits = [];
@@ -633,7 +675,11 @@ function syncUIFromState() {
     setCtl('density', p.density);
     setCtl('velocity', p.velocity);
     setCtl('gate', p.gate);
+    // Rebuild the Output menu directly (a saved/offline port may not be a listed
+    // option; routing through setCtl would clobber p.output back to the synth).
+    fillPartOutputs(panel, p, midi.listOutputs());
   }
+  const padSel = document.querySelector('[data-ctl="padMode"]'); if (padSel) padSel.value = state.padMode;
   const bassSel = document.querySelector('[data-ctl="bassStyle"]'); if (bassSel) bassSel.value = state.bassStyle;
   const arpSel = document.querySelector('[data-ctl="arpDir"]'); if (arpSel) arpSel.value = state.arpDir;
   syncBlockEditor();
@@ -739,8 +785,7 @@ window.addEventListener('keydown', (e) => {
   }
 });
 
-// ---- first-run checklist (1.4) ----
-const FR_KEY = 'modularriffs:onboarded';
+// ---- first-run checklist (1.4) ---- (FR_KEY is declared near the top of the module)
 function refreshFirstRun() {
   const fr = $('firstrun');
   if (!fr) return;
@@ -748,8 +793,7 @@ function refreshFirstRun() {
   fr.hidden = false;
   const mark = (step, ok) => { const el = fr.querySelector(`[data-step="${step}"]`); if (el) el.classList.toggle('done', ok); };
   mark('midi', midiEnabled);
-  mark('port', !!midi.output);
-  mark('out', state.outputMode !== 'synth');
+  mark('route', Object.values(state.parts).some((p) => p.output && p.output !== 'synth'));
 }
 $('frDismiss').addEventListener('click', () => { localStorage.setItem(FR_KEY, '1'); $('firstrun').hidden = true; });
 

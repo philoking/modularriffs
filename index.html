@@ -17,8 +17,7 @@
     </div>
 
     <div class="transport">
-      <button id="btnEnableMidi" class="btn">Enable MIDI</button>
-      <select id="midiOut" class="sel" title="MIDI output" disabled></select>
+      <button id="btnEnableMidi" class="btn" title="Grant MIDI access, then route each track from its ⚙ panel">Enable MIDI</button>
       <button id="btnStart" class="btn btn-go" disabled>▶ Start</button>
       <button id="btnPause" class="btn" disabled>⏸ Pause</button>
       <button id="btnStop" class="btn" disabled>■ Stop</button>
@@ -76,7 +75,7 @@
 
     <!-- Parts — compact live mixer -->
     <section class="panel">
-      <h2>Parts <span class="hint">mute &amp; ride Activity live · ⚙ opens channel, octave &amp; fine controls</span></h2>
+      <h2>Parts <span class="hint">mute &amp; ride Activity live · ⚙ opens output, channel, octave &amp; fine controls</span></h2>
       <div id="parts" class="parts-strip"></div>
     </section>
 
@@ -100,19 +99,13 @@
       </div>
 
       <div class="grid">
-        <label class="field">Output
-          <select id="outputMode" class="sel">
-            <option value="both">Internal synth + MIDI</option>
-            <option value="synth">Internal synth only</option>
-            <option value="midi">MIDI only</option>
-          </select>
-        </label>
         <label class="field">Synth volume <span id="volVal" class="val"></span>
           <input id="vol" type="range" min="0" max="1" step="0.01" value="0.8" />
         </label>
       </div>
 
-      <label class="check"><input id="sendClock" type="checkbox" checked /> Send MIDI clock + Start/Stop (sync your modular)</label>
+      <p class="hint">Each track routes itself — open a part's ⚙ to send it to the internal synth or to a MIDI interface + channel. Mix and match across interfaces for a DAWless rig.</p>
+      <label class="check"><input id="sendClock" type="checkbox" checked /> Send MIDI clock + Start/Stop (sync every interface a track uses)</label>
       <p class="hint energy-note">Energy lives on the Arrangement now — drag the Intensity lane's left edge up/down to lift or drop the whole song.</p>
     </section>
 
@@ -164,11 +157,10 @@
     <div id="firstrun" class="firstrun" hidden>
       <span class="fr-title">Get started</span>
       <span class="fr-item" data-step="midi">Enable MIDI</span>
-      <span class="fr-item" data-step="port">Pick your interface</span>
-      <span class="fr-item" data-step="out">Set output</span>
+      <span class="fr-item" data-step="route">Route a track to your interface</span>
       <button id="frDismiss" class="tl-clear" type="button">dismiss</button>
     </div>
-    <span id="status">Press ▶ Start to hear the internal synth. For your modular: “Enable MIDI”, pick your USB interface, set Output to include MIDI, then ▶ Start.</span>
+    <span id="status">Press ▶ Start to hear the internal synth. For your gear: “Enable MIDI”, then open a track’s ⚙ and set its Output to your interface + channel.</span>
   </footer>
 
   <script type="module" src="js/app.js"></script>
