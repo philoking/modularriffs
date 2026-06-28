@@ -13,10 +13,12 @@ const START = 0xfa;   // transport start
 const STOP = 0xfc;    // transport stop
 const CONTINUE = 0xfb;
 
+// Each track routes itself to a destination, so the send helpers all take an
+// explicit `out` (a MIDIOutput resolved from a part's saved port id). Tracks can
+// target different interfaces at once — a USB synth on one, a modular on another.
 export class MidiOut {
   constructor() {
     this.access = null;
-    this.output = null;
     this.onStateChange = null;
   }
 
@@ -33,44 +35,45 @@ export class MidiOut {
     return this.access ? [...this.access.outputs.values()] : [];
   }
 
-  selectOutput(id) {
-    this.output = this.access ? this.access.outputs.get(id) || null : null;
-    return this.output;
+  // Resolve a saved port id to a live MIDIOutput, or null if it's gone/offline.
+  get(id) {
+    return this.access && id ? this.access.outputs.get(id) || null : null;
   }
 
-  // ---- channel voice messages (channel is 0-15) ----
-  noteOn(ch, note, vel, time) {
-    if (this.output) this.output.send([NOTE_ON | (ch & 0x0f), note & 0x7f, vel & 0x7f], time);
+  // ---- channel voice messages (out is a MIDIOutput; channel is 0-15) ----
+  noteOn(out, ch, note, vel, time) {
+    if (out) out.send([NOTE_ON | (ch & 0x0f), note & 0x7f, vel & 0x7f], time);
   }
 
-  noteOff(ch, note, time) {
-    if (this.output) this.output.send([NOTE_OFF | (ch & 0x0f), note & 0x7f, 0], time);
+  noteOff(out, ch, note, time) {
+    if (out) out.send([NOTE_OFF | (ch & 0x0f), note & 0x7f, 0], time);
   }
 
-  cc(ch, controller, value, time) {
-    if (this.output) this.output.send([CC | (ch & 0x0f), controller & 0x7f, value & 0x7f], time);
+  cc(out, ch, controller, value, time) {
+    if (out) out.send([CC | (ch & 0x0f), controller & 0x7f, value & 0x7f], time);
   }
 
-  // ---- system real-time (clock/transport) ----
-  clock(time)    { if (this.output) this.output.send([CLOCK], time); }
-  sendStart(time)    { if (this.output) this.output.send([START], time); }
-  sendStop(time)     { if (this.output) this.output.send([STOP], time); }
-  sendContinue(time) { if (this.output) this.output.send([CONTINUE], time); }
+  // ---- system real-time (clock/transport) — one output at a time ----
+  clock(out, time)        { if (out) out.send([CLOCK], time); }
+  sendStart(out, time)    { if (out) out.send([START], time); }
+  sendStop(out, time)     { if (out) out.send([STOP], time); }
+  sendContinue(out, time) { if (out) out.send([CONTINUE], time); }
 
   // Cancel anything still queued in the MIDI layer (e.g. future note-offs).
-  clearScheduled() {
-    if (this.output && typeof this.output.clear === 'function') this.output.clear();
+  clearScheduled(out) {
+    if (out && typeof out.clear === 'function') out.clear();
   }
 
-  // Silence everything. Used on stop and by the Panic button.
-  panic(channels = [0, 1, 2, 3]) {
-    this.clearScheduled();
-    if (!this.output) return;
-    for (const ch of channels) {
-      this.cc(ch, 123, 0); // All Notes Off
-      this.cc(ch, 120, 0); // All Sound Off
+  // Silence held notes across a set of routes ({ out, channel }). Used on stop
+  // and by the Panic button. Distinct outputs may repeat a channel — harmless.
+  panic(routes = []) {
+    for (const { out, channel } of routes) {
+      if (!out) continue;
+      this.clearScheduled(out);
+      this.cc(out, channel, 123, 0); // All Notes Off
+      this.cc(out, channel, 120, 0); // All Sound Off
       // Belt-and-braces: explicit note-offs for held notes some gear ignores CC123 on.
-      for (let n = 24; n <= 96; n++) this.noteOff(ch, n);
+      for (let n = 24; n <= 96; n++) this.noteOff(out, channel, n);
     }
   }
 }

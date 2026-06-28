@@ -177,16 +177,18 @@ export class JamGenerator {
     this.curEnergy = withEnergy(baseInt, this.state.energy);
 
     const out = [];
-    const run = (part, fn) => {
+    // `mono` forces one note at a time (the default for monophonic gear); the pad
+    // in chord mode opts out so its stacked voices survive.
+    const run = (part, fn, mono = true) => {
       if (!this.state.parts[part].enabled) return;
       const m = this.state.mutes && this.state.mutes[part];
       if (m && m.has(bar)) return; // per-bar mute (absolute bar) from the timeline
       const arr = [];
       fn(arr, chord, nextChord, bar);
       for (const e of arr) e.part = part;
-      for (const e of this.enforceMono(arr)) out.push(e);
+      for (const e of (mono ? this.enforceMono(arr) : arr)) out.push(e);
     };
-    run('pad', (a, c) => this.genPad(a, c));
+    run('pad', (a, c) => this.genPad(a, c), this.state.padMode !== 'chord');
     run('bass', (a, c, n) => this.genBass(a, c, n));
     run('melody', (a, c) => this.genArp(a, c));
     run('alt', (a, c, n, b) => this.genLead(a, b, c));
@@ -216,24 +218,35 @@ export class JamGenerator {
     return cleaned;
   }
 
-  // ---- PAD: one voice-led sustained note per chord (mono drone). -----------
-  // Density adds gentle re-articulations (still one pitch).
+  // ---- PAD: a sustained voice per chord. In 'note' mode (the default) it's one
+  // voice-led guide tone — a mono drone; in 'chord' mode it's the whole chord
+  // voiced as a block. Density adds gentle re-articulations (pitch/voicing held).
   genPad(events, chord) {
     const p = this.state.parts.pad;
     const ch = p.channel;
     const base = this.baseMidi('pad');
-    // Lean on the chord's guide tones (3rd/7th) with voice leading — the bass owns
-    // the root, so the pad colours the harmony rather than doubling it.
-    const tones = this.guideTones(chord, base);
-    const note = this.lastPad == null ? tones[0] : this.nearestIn(tones, this.lastPad);
     const dens = clamp(p.density * (0.6 + this.curEnergy * 0.5), 0, 1);
     const hits = dens < 0.4 ? 1 : dens < 0.7 ? 2 : 4;
     const span = STEPS_PER_BAR / hits;
     const gate = 0.6 + p.gate * 0.4;
-    for (let h = 0; h < hits; h++) {
-      events.push(this.ev(ch, note, this.velo('pad'), h * span, span * gate));
+
+    // Chord: stack the chord tones from baseMidi (root + colour tones, up to a 7th).
+    // Note: lean on a single voice-led guide tone (3rd/7th) so the bass owns the root.
+    let notes;
+    if (this.state.padMode === 'chord') {
+      notes = chordTones(chord, base, 4);
+    } else {
+      const tones = this.guideTones(chord, base);
+      const note = this.lastPad == null ? tones[0] : this.nearestIn(tones, this.lastPad);
+      this.lastPad = note;
+      notes = [note];
     }
-    this.lastPad = note;
+
+    for (let h = 0; h < hits; h++) {
+      for (const note of notes) {
+        events.push(this.ev(ch, note, this.velo('pad'), h * span, span * gate));
+      }
+    }
   }
 
   // ---- BASS: root-driven mono patterns. ------------------------------------
